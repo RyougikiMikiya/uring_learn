@@ -320,6 +320,9 @@ int main(int argc, char **argv)
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_dumper_t *dumper = nullptr;
 
+    int iov_max = sysconf(_SC_IOV_MAX);
+    cout << "iov_max =" << iov_max << endl;
+ 
     pcap_t *pcap = pcap_open_offline(argv[1], errbuf);
     if (!pcap)
     {

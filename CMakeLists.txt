@@ -12,7 +12,7 @@ include_directories(libpcap)
 
 add_subdirectory(libpcap)
 
-add_executable(uring_pcap_copy uring_test.cpp)
+add_executable(uring_pcap_copy uring_pcap_copy.cpp)
 
 # target_compile_options(mytest PRIVATE -fpermissive)
 

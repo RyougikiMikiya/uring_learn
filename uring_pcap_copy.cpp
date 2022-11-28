@@ -6,6 +6,7 @@
 #include <string>
 #include <sys/uio.h>
 #include <vector>
+#include <algorithm>
 
 #include <cassert>
 #include <limits.h>
@@ -30,6 +31,8 @@ const static pcap_file_header std_pcap_hdr = {.magic = 0xa1b2c3d4,
                                               .linktype = 1};
 
 using namespace std;
+
+const int iov_max = sysconf(_SC_IOV_MAX);
 
 void test01(int argc, char **argv)
 {
@@ -313,6 +316,29 @@ void write_pcap_by_uring_2(int fd)
     return;
 }
 
+void cq_clear_test()
+{
+    io_uring ring;
+    int ret = io_uring_queue_init(1, &ring, 0);
+
+    io_uring_cqe *cqe;
+
+    for (int i = 0; i < 10000; i++){
+        auto sqe = io_uring_get_sqe(&ring);
+        assert(sqe);
+        auto sqe2 = io_uring_get_sqe(&ring);
+        assert(!sqe2);
+        io_uring_prep_write(sqe, STDOUT_FILENO, "hello world\n", 13, 0);
+        io_uring_submit_and_wait(&ring, 1);
+        /* 
+            这里如果不调用去清空cq的状态，那么后面get sqe一样会失败的
+         */
+        // io_uring_cq_advance(&ring, 1);
+    }
+
+    io_uring_queue_exit(&ring);
+}
+
 int main(int argc, char **argv)
 {
     string errBuf;
@@ -320,7 +346,6 @@ int main(int argc, char **argv)
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_dumper_t *dumper = nullptr;
 
-    int iov_max = sysconf(_SC_IOV_MAX);
     cout << "iov_max =" << iov_max << endl;
  
     pcap_t *pcap = pcap_open_offline(argv[1], errbuf);

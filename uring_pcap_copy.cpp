@@ -141,6 +141,7 @@ void write_pcap_by_write(int fd2)
 {
     assert(fd2 >= 0);
 
+#if 0
     int ret = write(fd2, &std_pcap_hdr, sizeof std_pcap_hdr);
     assert(ret > 0);
 
@@ -152,6 +153,12 @@ void write_pcap_by_write(int fd2)
         ret = write(fd2, pktdatas[i].data(), len1);
         assert(ret > 0);
     }
+#else
+    for_each(iovecs.begin(), iovecs.end(), [fd2](auto & iovec){
+        int ret = write(fd2, iovec.iov_base, iovec.iov_len);
+        assert(ret > 0);
+    });
+#endif
 }
 
 void write_pcap_by_fstream(ofstream &f1)
@@ -177,7 +184,7 @@ void write_pcap_by_uring_1(int fd)
     struct io_uring ring;
     int cur_offset = 0;
 
-    uint entries = 16;
+    uint entries = 4;
 
     ret = io_uring_queue_init(entries, &ring, 0);
     if (ret < 0)
@@ -250,13 +257,13 @@ void write_pcap_by_uring_1(int fd)
 
 void write_pcap_by_uring_2(int fd)
 {
-    int ret;
-    struct io_uring ring;
-    int cur_offset = 0;
+    assert(fd >= 0);
 
-    uint entries = 8;
+    io_uring ring;
+    int preped = 0;
+    uint entries = 64;
 
-    ret = io_uring_queue_init(entries, &ring, 0);
+    int ret = io_uring_queue_init(entries, &ring, 0);
     if (ret < 0)
     {
         cout << ret << endl;
@@ -264,56 +271,28 @@ void write_pcap_by_uring_2(int fd)
         return;
     }
 
-    iovec *tmp = iovecs.data();
-    int size = iovecs.size();
+    int offset = 0;
 
-    struct io_uring_cqe *cqe = nullptr;
-    int writed = 0, rest = iovecs.size();
-    int per = rest > IOV_MAX ? IOV_MAX : rest;
-    int submited = 0;
-
-    do
+    for (int i = 0; i < iovecs.size(); i++) 
     {
         auto sqe = io_uring_get_sqe(&ring);
-        if (!sqe)
+        if(!sqe) 
         {
-            /* 
-            大概不可能
-             */
-            assert(false);
+            ret = io_uring_submit_and_wait(&ring, preped);
+            assert(ret == entries);
+            io_uring_cq_advance(&ring, ret);
+            preped = 0;
+            sqe = io_uring_get_sqe(&ring);
+            assert(sqe);
         }
-        int per = rest > IOV_MAX ? IOV_MAX : rest;
-        io_uring_prep_writev(sqe, fd, iovecs.data() + writed, per, cur_offset);
-        int ret = io_uring_submit(&ring);
-        if (ret < 0) {
-            fprintf(stderr, "io_uring_submit: %s\n",
-                    strerror(-ret));
-            return; 
-        }
-        for (int i = writed; i < writed + per; i++)
-        {
-            cur_offset += iovecs[i].iov_len;
-        }
-        writed += per;
-        rest -= per;
-        submited++;
-    } while (rest > 0);
-
-    for (int pending = submited; pending > 0; pending--) {
-        /* 
-            非阻塞用 io_uring_peek_cqe
-         */
-        ret = io_uring_wait_cqe(&ring, &cqe);
-        if (ret < 0) {
-            fprintf(stderr, "io_uring_wait_cqe: %s\n",
-                    strerror(-ret));
-            return;             
-        }
-        io_uring_cqe_seen(&ring, cqe);
+        io_uring_prep_write(sqe, fd, iovecs[i].iov_base, iovecs[i].iov_len, offset);
+        preped++;
+        offset += iovecs[i].iov_len;
     }
+    ret = io_uring_submit_and_wait(&ring, preped);
+    io_uring_cq_advance(&ring, ret);
 
     io_uring_queue_exit(&ring);
-    return;
 }
 
 void cq_clear_test()
@@ -376,7 +355,7 @@ int main(int argc, char **argv)
 
     printf("writev Elapsed: %lu clock\n", tic2 - tic1);
 
-    int fd2 = open("test_writev.pcap", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int fd2 = open("test_write.pcap", O_WRONLY | O_CREAT | O_TRUNC, 0644);
     clock_t tic3 = clock();
     write_pcap_by_write(fd2);
     clock_t tic4 = clock();
